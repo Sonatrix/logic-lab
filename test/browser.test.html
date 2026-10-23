@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html><body><pre id="out">running…</pre>
+<iframe id="f" src="../index.html" style="width:1300px;height:800px"></iframe>
+<script>
+const out = [];
+const log = (name, ok, extra) => out.push((ok ? 'PASS ' : 'FAIL ') + name + (ok ? '' : '  ' + extra));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+window.addEventListener('error', e => out.push('PAGE ERROR ' + e.message));
+
+document.getElementById('f').addEventListener('load', async () => {
+  const w = document.getElementById('f').contentWindow;
+  const ev = c => w.eval(c);
+  const errors = [];
+  w.addEventListener('error', e => errors.push(e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
+  w.addEventListener('unhandledrejection', e => errors.push('rejection ' + e.reason));
+  try {
+    await sleep(500);
+    log('boot renders nodes', ev('document.querySelectorAll("#canvas .node").length') > 0, 'no nodes');
+    log('palette built', ev('document.querySelectorAll(".item").length') === 30, ev('document.querySelectorAll(".item").length'));
+
+    log('first run starts the tour', ev('tourIndex') === 0, ev('tourIndex'));
+    ev('tourEnd()');
+
+    // every example loads, renders, and simulates without throwing
+    const names = ev('Object.keys(EXAMPLES)');
+    for (const n of names) {
+      ev(`loadExample(${JSON.stringify(n)})`);
+      const nodes = ev('document.querySelectorAll("#canvas .node").length'), wires = ev('document.querySelectorAll("#canvas .wire").length');
+      log('example: ' + n, nodes === ev('state.nodes.length') && wires === ev('state.wires.length') && nodes > 0, `${nodes}/${wires}`);
+    }
+
+    // 4-bit adder arithmetic through the real UI pipeline
+    ev('loadExample("4-bit adder (ripple carry)")');
+    const sums = [];
+    for (const [a, b] of [[3, 5], [9, 9], [15, 1], [7, 8]]) {
+      ev(`state.nodes.filter(n => n.type === "INPUT").forEach(n => { const m = /^([AB])(\\d)$/.exec(n.label); if (m) n.value = !!(((m[1] === "A" ? ${a} : ${b}) >> +m[2]) & 1); }); changed();`);
+      const s = ev('["S0","S1","S2","S3","COUT"].map((l, i) => +val(state.nodes.find(n => n.type === "OUTPUT" && n.label === l).id) << i).reduce((x, y) => x + y)');
+      sums.push(s === a + b);
+    }
+    log('4-bit adder adds correctly', sums.every(Boolean), sums.join());
+
+    // counters actually count with the clock
+    ev('loadExample("Traffic light (T flip-flops)")');
+    const seen = new Set();
+    for (let i = 0; i < 8; i++) {
+      ev('state.nodes.find(n => n.type === "CLOCK").value = !state.nodes.find(n => n.type === "CLOCK").value; changed(true);');
+      seen.add(ev('state.nodes.filter(n => n.type === "OUTPUT").map(o => +val(o.id)).join("")'));
+    }
+    log('traffic light cycles through states', seen.size >= 3 && ![...seen].some(s => s.split('1').length - 1 !== 1), [...seen].join(' '));
+
+    // hex decoder shows digits
+    ev('loadExample("Hex → 7-segment decoder")');
+    ev('state.nodes.filter(n => n.type === "INPUT").forEach((n, i) => { n.value = i === 0 || i === 1; }); changed();');   // value 3
+    const segsOn = ev('document.querySelectorAll("#canvas .seg.on").length');
+    log('decoder lights 5 segments for "3"', segsOn === 5, segsOn);
+
+    // expressions dialog
+    ev('document.getElementById("btn-expr").click()');
+    ev('document.getElementById("expr-text").value = "SUM = A XOR B XOR CIN\\nCOUT = A*B + CIN*(A^B)"; document.getElementById("expr-build").click()');
+    log('expression builds a circuit', ev('state.nodes.filter(n => n.type === "OUTPUT").length') === 2 && ev('state.nodes.some(n => n.type === "XOR")'));
+    ev('document.getElementById("btn-expr").click()');
+    const analysis = ev('document.getElementById("expr-analysis").textContent');
+    log('analysis shows minimal form', /minimal sum-of-products/.test(analysis), analysis.slice(0, 120));
+    ev('document.getElementById("expr-text").value = "Y = A AND"; document.getElementById("expr-build").click()');
+    log('bad expression shows an error', /Line 1/.test(ev('document.getElementById("expr-err").textContent')));
+    ev('document.getElementById("dlg-expr").close()');
+
+    // challenge flow
+    ev('document.getElementById("btn-challenges").click()');
+    log('challenge list renders', ev('document.querySelectorAll(".chal").length') === ev('CHALLENGES.length'));
+    ev('document.querySelector(".chal").click()');
+    log('challenge scaffold + card', ev('!!activeChallenge') && ev('document.querySelector("#challenge .card")') !== null);
+    ev('document.querySelector("#challenge [data-act=check]").click()');
+    log('unsolved challenge fails', /❌/.test(ev('document.getElementById("challenge").textContent')));
+    // solve it: A -> NOT -> Y
+    ev(`{ const a = state.nodes.find(n => n.type === "INPUT"), y = state.nodes.find(n => n.type === "OUTPUT"); const g = addNode("NOT", 300, 60);
+      connect(a.id, 0, g.id, 0); connect(g.id, 0, y.id, 0); changed(); }`);
+    ev('document.querySelector("#challenge [data-act=check]").click()');
+    log('solved challenge passes', /✅/.test(ev('document.getElementById("challenge").textContent')), ev('document.getElementById("challenge").textContent').slice(-80));
+
+    // slow motion: a chain of 3 NOT gates takes 3 gate delays
+    ev('document.getElementById("btn-challenges") && 0; activeChallenge = null; state = fresh(); sim = newSim(); changed();');
+    ev(`{ const i = addNode("INPUT", 40, 40, "A"), n1 = addNode("NOT", 160, 40), n2 = addNode("NOT", 280, 40), n3 = addNode("NOT", 400, 40), o = addNode("OUTPUT", 520, 40, "Y");
+      connect(i.id, 0, n1.id, 0); connect(n1.id, 0, n2.id, 0); connect(n2.id, 0, n3.id, 0); connect(n3.id, 0, o.id, 0); changed(); globalThis.__chain = { i, o }; }`);
+    const sp = w.document.getElementById('speed'); sp.value = 'manual'; sp.dispatchEvent(new w.Event('change'));
+    const before = ev('+val(__chain.o.id)');
+    ev('__chain.i.value = true; changed(true);');
+    const steps = [];
+    for (let k = 0; k < 6; k++) { ev('document.getElementById("step").click()'); steps.push(ev('+val(__chain.o.id)') + ':' + ev('pending')); }
+    log('manual step: output flips only after gate delays', before === 1 && steps[3].startsWith("1:") && steps[4].startsWith("0:") && /false$/.test(steps[5]), before + ' ' + steps.join(' '));
+    sp.value = 'off'; sp.dispatchEvent(new w.Event('change'));
+    log('instant mode settles immediately', ev('+val(__chain.o.id)') === 0 && ev('pending') === false);
+
+    // timing diagram
+    ev('document.getElementById("btn-timing").click()');
+    ev('__chain.i.value = false; changed(true); __chain.i.value = true; changed(true);');
+    await sleep(250);
+    const cv = w.document.getElementById('timing-canvas');
+    const px = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    let lit = 0; for (let k = 3; k < px.length; k += 4) if (px[k]) lit++;
+    log('timing diagram draws', lit > 200 && ev('timing.hist.length') >= 2, `${lit} px, ${ev('timing.hist.length')} samples`);
+    ev('document.getElementById("timing-close").click()');
+
+    // selection, copy/paste, block, undo
+    ev('loadExample("Full adder")');
+    ev('sel = new Set(state.nodes.map(n => n.id)); selected = null; copySelection(); pasteClipboard();');
+    log('copy/paste duplicates parts and internal wires', ev('state.nodes.length') === 20 && ev('state.wires.length') === 24, ev('state.nodes.length + "/" + state.wires.length'));
+    ev('undo()');
+    log('undo reverts paste', ev('state.nodes.length') === 10);
+    const origPrompt = w.prompt; w.prompt = () => 'MyAdder';
+    ev('sel = new Set(state.nodes.map(n => n.id)); document.getElementById("save-block").click();');
+    w.prompt = origPrompt;
+    log('block saved + in palette', ev('BLOCKS.has("MyAdder")') && ev('document.querySelectorAll("#block-items .item").length') === 1);
+    ev('state = fresh(); sim = newSim(); addPart("BLOCK:MyAdder", 300, 200);');
+    log('block placed with 3 in / 2 out pins', ev('document.querySelectorAll("#canvas .node.block .port[data-port=in]").length') === 3 && ev('document.querySelectorAll("#canvas .node.block .port[data-port=out]").length') === 2);
+
+    // share link round trip + import validation
+    const link = await w.encodeShare(ev('exportPayload(view)'));
+    const back = await w.decodeShare(link);
+    log('share link round-trips', back.nodes.length === 1 && back.blocks.length === 1, JSON.stringify(back).slice(0, 80));
+    let bomb = false;
+    try { await w.decodeShare('z.' + 'AAAA'.repeat(10)); } catch { bomb = true; }
+    log('garbage share link rejected', bomb);
+
+    // ---- real pointer interaction (synthetic PointerEvents)
+    w.SVGElement.prototype.setPointerCapture = () => {};
+    const svgEl = w.document.getElementById('canvas');
+    const fire = (type, target, x, y, extra = {}) => target.dispatchEvent(new w.PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, pointerType: 'mouse', ...extra }));
+    const center = el => { const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+    ev('state = fresh(); sim = newSim(); view = { x: 0, y: 0, k: 1 }; activeChallenge = null; changed(); addPart("INPUT", 120, 120); addPart("NOT", 300, 120); addPart("OUTPUT", 480, 120);');
+    const nodeEl = id => w.document.querySelector(`#canvas .node[data-node="${id}"]`);
+    const [inN, notN, outN] = ev('state.nodes.map(n => n.id)');
+    const portEl = (id, kind, idx = 0) => w.document.querySelector(`#canvas .port[data-port="${kind}"][data-node="${id}"][data-idx="${idx}"]`);
+    // drag a wire from the switch output to the NOT input, and NOT output to the LED
+    const wire = (fromId, toId) => {
+      const a = center(portEl(fromId, 'out')), b = center(portEl(toId, 'in'));
+      fire('pointerdown', portEl(fromId, 'out'), a.x, a.y); fire('pointermove', svgEl, (a.x + b.x) / 2, b.y); fire('pointermove', svgEl, b.x, b.y); fire('pointerup', svgEl, b.x, b.y);
+    };
+    wire(inN, notN); wire(notN, outN);
+    log('drag-to-connect creates 2 wires', ev('state.wires.length') === 2, ev('state.wires.length'));
+    log('LED lit (NOT 0 = 1)', ev(`val(${outN})`) === true);
+    // click the switch
+    let c = center(nodeEl(inN).querySelector('.body'));
+    fire('pointerdown', nodeEl(inN).querySelector('.body'), c.x, c.y); fire('pointerup', svgEl, c.x, c.y);
+    log('clicking a switch toggles it and updates the LED', ev(`byId(${inN}).value`) === true && ev(`val(${outN})`) === false);
+    // drag a node
+    const before0 = ev(`byId(${notN}).x`);
+    c = center(nodeEl(notN).querySelector('.body'));
+    fire('pointerdown', nodeEl(notN).querySelector('.body'), c.x, c.y); fire('pointermove', svgEl, c.x + 60, c.y + 30); fire('pointerup', svgEl, c.x + 60, c.y + 30);
+    log('dragging moves a gate', ev(`byId(${notN}).x`) > before0, before0 + ' -> ' + ev(`byId(${notN}).x`));
+    // click a wire, then delete with the keyboard
+    const wEl = w.document.querySelector('#canvas .wire .hit'); c = center(wEl);
+    const hit = w.document.elementFromPoint(c.x, c.y);
+    fire('pointerdown', hit.closest('[data-wire]') ? hit : wEl, c.x, c.y); fire('pointerup', svgEl, c.x, c.y);
+    log('click selects a wire (✕ handle shown)', w.document.querySelectorAll('#canvas .wire-x').length === 1);
+    w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    log('Delete removes the selected wire', ev('state.wires.length') === 1, ev('state.wires.length'));
+    // shift + drag box selects everything
+    const r0 = svgEl.getBoundingClientRect();
+    fire('pointerdown', svgEl, r0.left + 5, r0.top + 5, { shiftKey: true }); fire('pointermove', svgEl, r0.right - 5, r0.bottom - 5, { shiftKey: true }); fire('pointerup', svgEl, r0.right - 5, r0.bottom - 5);
+    log('shift-drag box selects all parts', ev('sel.size') === 3, ev('sel.size'));
+    // unconnected inputs are flagged
+    log('floating inputs are highlighted', w.document.querySelectorAll('#canvas .port.float').length >= 1);
+    // wheel zoom + dblclick-to-place from palette
+    svgEl.dispatchEvent(new w.WheelEvent('wheel', { deltaY: -100, clientX: 400, clientY: 300, bubbles: true, cancelable: true }));
+    log('wheel zooms in', ev('view.k') > 1.05, ev('view.k'));
+    const nBefore = ev('state.nodes.length');
+    w.document.querySelector('.item[data-type="XOR"]').dispatchEvent(new w.MouseEvent('dblclick', { bubbles: true }));
+    log('double-click on palette places a part', ev('state.nodes.length') === nBefore + 1);
+    // button is momentary
+    ev('addPart("BUTTON", 300, 300)'); const bid = ev('state.nodes[state.nodes.length - 1].id'); c = center(nodeEl(bid).querySelector('.body'));
+    fire('pointerdown', nodeEl(bid).querySelector('.body'), c.x, c.y); const held = ev(`byId(${bid}).value`);
+    fire('pointerup', svgEl, c.x, c.y);
+    log('button is 1 only while held', held === true && ev(`byId(${bid}).value`) === false);
+    // fit view keeps a big example inside the canvas
+    ev('loadExample("4-bit adder (ripple carry)")');
+    const sb = svgEl.getBoundingClientRect(); const rects = [...w.document.querySelectorAll('#canvas .node')].map(n => n.getBoundingClientRect());
+    log('big example fits the viewport', rects.every(r => r.left >= sb.left - 1 && r.right <= sb.right + 1 && r.top >= sb.top - 1 && r.bottom <= sb.bottom + 1), `k=${ev('view.k')}`);
+
+    // ---- accessibility: wiring through menus and keyboard navigation
+    ev('stopDemo(); state = fresh(); sim = newSim(); view = { x: 0, y: 0, k: 1 }; changed(); addPart("INPUT", 100, 100); addPart("NOT", 260, 100); addPart("OUTPUT", 420, 100);');
+    const [kin, knot, kout] = ev('state.nodes.map(n => n.id)');
+    const chooseSource = (nodeId, srcKey) => {
+      ev(`selectOnly(${nodeId}); renderGateInfo();`);
+      const s = w.document.querySelector('#gate-info select[data-act="wire"]');
+      s.value = srcKey; s.dispatchEvent(new w.Event('change', { bubbles: true }));
+      return s;
+    };
+    ev(`selectOnly(${knot}); renderGateInfo();`);
+    const menu = w.document.querySelector('#gate-info select[data-act="wire"]');
+    log('wiring menu lists every output as a source', !!menu && [...menu.options].some(o => o.value === `${kin}:0`));
+    chooseSource(knot, `${kin}:0`); chooseSource(kout, `${knot}:0`);
+    log('circuit can be wired from menus alone', ev('state.wires.length') === 2 && ev(`val(${kout})`) === true);
+    chooseSource(kout, '');
+    log('menu can disconnect an input', ev('state.wires.length') === 1);
+    chooseSource(kout, `${knot}:0`);
+
+    ev('selectOnly(null)'); svgEl.focus();
+    const kkey = (k, extra = {}) => svgEl.dispatchEvent(new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...extra }));
+    kkey(']'); log('"]" selects the first part left to right', ev('selected') === kin, ev('selected'));
+    kkey(']'); log('"]" moves on to the next part', ev('selected') === knot);
+    const kx = ev(`byId(${knot}).x`); kkey('ArrowRight');
+    log('arrow key moves the selected part', ev(`byId(${knot}).x`) === kx + 10);
+    kkey('['); kkey('Enter');
+    const srText = w.document.getElementById('sr').textContent;
+    log('Enter flips a switch and announces it', ev(`byId(${kin}).value`) === true && /now 1/.test(srText), srText);
+    const nBeforeKb = ev('state.nodes.length');
+    w.document.querySelector('.item[data-type="AND"]').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    log('Enter on a palette item places it', ev('state.nodes.length') === nBeforeKb + 1 && w.document.querySelector('.item').tabIndex === 0);
+
+    // ---- error handling and schema versions
+    const proto = w.Storage.prototype, origSet = proto.setItem;
+    proto.setItem = () => { throw new Error('quota'); };
+    ev('saveWarned = false; changed();');
+    log('autosave failure is reported', /Autosave is unavailable/.test(w.document.getElementById('toast').textContent));
+    proto.setItem = origSet;
+    log('newer file format is rejected with a reason', ev('importPayload({ version: 99, nodes: [], wires: [] })') === null && /newer version/.test(ev('importError')));
+    log('unversioned (older) files still load', ev('importPayload({ nodes: [], wires: [] })') !== null);
+
+    // ---- guided tour
+    ev('startTour()');
+    log('tour shows a spotlight and card', w.document.getElementById('tour-card').style.display === 'block' && w.document.getElementById('tour-hl').offsetWidth > 20);
+    for (let k = 0; k < 20 && ev('tourIndex') >= 0; k++) w.document.getElementById('tour-next').click();
+    log('tour finishes and is remembered', ev('tourIndex') === -1 && ev('localStorage.getItem(TOUR_KEY)') === '1');
+
+    // ---- image export
+    ev('loadExample("Full adder")');
+    const svgOut = ev('circuitSvg()');
+    log('SVG export is a standalone drawing', !!svgOut && /^<svg[^>]*viewBox/.test(svgOut.text) && !/class="hit"/.test(svgOut.text) && svgOut.text.includes('XOR'), svgOut && svgOut.text.slice(0, 80));
+    const png = await w.svgToPngBlob(svgOut);
+    log('PNG export renders', !!png && png.size > 1000 && png.type === 'image/png', png && png.size);
+
+    // ---- narrow screens use drawers and tap-to-place
+    const narrow = document.createElement('iframe');
+    narrow.style.cssText = 'width:600px;height:700px'; narrow.src = '../index.html';
+    document.body.appendChild(narrow);
+    await new Promise(r => narrow.addEventListener('load', r));
+    await sleep(500);
+    const nw = narrow.contentWindow, pal = nw.document.getElementById('palette');
+    nw.eval('tourEnd()');
+    nw.document.head.insertAdjacentHTML('beforeend', '<style>*{transition:none!important}</style>');   // headless virtual time does not advance transitions
+    const offscreen = pal.getBoundingClientRect().right <= 0;
+    nw.document.getElementById('toggle-palette').click();
+    await sleep(400);
+    const onscreen = pal.getBoundingClientRect().left >= -1;
+    const count0 = nw.eval('state.nodes.length');
+    nw.document.querySelector('.item[data-type="XOR"]').click();
+    log('narrow: palette is an off-canvas drawer', offscreen && onscreen, `${offscreen} ${onscreen}`);
+    log('narrow: tapping a part places it and closes the drawer', nw.eval('state.nodes.length') === count0 + 1 && !nw.document.body.classList.contains('show-palette'));
+
+    // ================= round 3 features =================
+    const click = sel => w.document.querySelector(sel).click();
+    const tool = v => { const t = w.document.getElementById('tools'); t.value = v; t.dispatchEvent(new w.Event('change', { bubbles: true })); };
+
+    // ---- palette search
+    const search = w.document.getElementById('palette-search');
+    search.value = 'xor'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+    const shown = [...w.document.querySelectorAll('#palette .item:not([hidden])')].map(i => i.dataset.type).sort().join();
+    log('palette search filters parts', shown === 'XOR', shown);
+    log('palette search hides empty groups', [...w.document.querySelectorAll('#palette .group')].filter(g => g.hidden).length >= 3);
+    search.value = 'zzzz'; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+    log('palette search reports no matches', !w.document.getElementById('palette-none').hidden);
+    search.value = ''; search.dispatchEvent(new w.Event('input', { bubbles: true }));
+    log('clearing the search restores everything', w.document.querySelectorAll('#palette .item[hidden]').length === 0);
+
+    // ---- new example circuits load and compute
+    ev('loadExample("4-bit ALU with number display")');
+    const busText = [...w.document.querySelectorAll('#canvas .node.busout text.big')].map(t => t.textContent).join();
+    log('ALU example: 9 + 5 shows 0xE on the number display', busText === '0xE', busText);
+    ev('state.nodes.find(n => n.type === "BUSIN").num = 3; changed(true);');
+    log('number input drives the ALU (3 + 5 = 8)', [...w.document.querySelectorAll('#canvas .node.busout text.big')].map(t => t.textContent).join() === '0x8');
+    ev('loadExample("Static hazard (glitch demo)")');
+    log('hazard example switches on Slow-mo and the timing panel', ev('speedMode') === 'slow' && ev('timing.visible') === true && !w.document.getElementById('timing').hidden);
+    ev('loadExample("Full adder")');
+    log('leaving the hazard example restores the previous speed', ev('speedMode') === 'off' && w.document.getElementById('speed').value === 'off');
+    ev('loadExample("Static hazard (glitch demo)")');
+    ev('selectOnly(state.nodes.find(n => n.type === "NOT").id); renderGateInfo();');
+    log('gate panel shows its propagation delay', /Delay/.test(w.document.getElementById('gate-info').textContent) && ev('state.nodes.find(n => n.type === "NOT").delay') === 3);
+    w.document.querySelector('#gate-info [data-act="dinc"]').click();
+    log('delay can be changed from the panel', ev('state.nodes.find(n => n.type === "NOT").delay') === 4);
+    sp.value = 'off'; sp.dispatchEvent(new w.Event('change'));
+    ev('stopSlow(); timing.hist = []; showTiming(false);');
+    ev('loadExample("Counter with number display")');
+    log('counter example renders the number display', !!w.document.querySelector('#canvas .node.busout') && !!w.document.querySelector('#canvas .node.counter4'));
+
+    // ---- bus part interaction
+    ev('state = fresh(); sim = newSim(); changed(); addPart("BUSIN", 200, 150);');
+    const busId = ev('state.nodes[0].id'); c = center(nodeEl(busId).querySelector('.body'));
+    fire('pointerdown', nodeEl(busId).querySelector('.body'), c.x, c.y); fire('pointerup', svgEl, c.x, c.y);
+    log('clicking a number input counts up', ev('state.nodes[0].num') === 1);
+    ev('selectOnly(state.nodes[0].id); renderGateInfo();');
+    const bitsSel = w.document.querySelector('#gate-info select[data-act="bits"]'); bitsSel.value = '8'; bitsSel.dispatchEvent(new w.Event('change', { bubbles: true }));
+    log('number input can widen to 8 bits', ev('state.nodes[0].bits') === 8 && w.document.querySelectorAll('#canvas .node.busin .port[data-port="out"]').length === 8);
+
+    // ---- notes
+    ev('addPart("NOTE", 300, 300)');
+    log('notes can be placed and have no pins', w.document.querySelectorAll('#canvas .node.note').length === 1 && w.document.querySelectorAll('#canvas .node.note .port').length === 0);
+
+    // ---- tidy layout
+    ev('loadExample("Full adder"); state.nodes.forEach((n, i) => { n.x = (i * 137) % 600; n.y = (i * 89) % 400; }); changed();');
+    tool('tidy');
+    log('Tidy arranges parts left to right', ev('state.wires.every(w => byId(w.from).x < byId(w.to).x)'));
+    ev('undo()');
+    log('Tidy can be undone', !ev('state.wires.every(w => byId(w.from).x < byId(w.to).x)'));
+
+    // ---- pause
+    ev('state = fresh(); sim = newSim(); changed(); addPart("CLOCK", 100, 100);');
+    click('#pause');
+    const clkBefore = ev('state.nodes[0].value'); await sleep(1500);
+    log('pause freezes the clocks', ev('paused') === true && ev('state.nodes[0].value') === clkBefore && w.document.body.classList.contains('paused'));
+    click('#pause'); await sleep(1500);
+    log('resume restarts the clocks', ev('paused') === false && ev('state.nodes[0].value') !== clkBefore);
+
+    // ---- presentation mode
+    tool('present');
+    log('presentation mode hides the chrome', w.document.body.classList.contains('present') && !w.document.getElementById('present-exit').hidden);
+    click('#present-exit'); await sleep(100);
+    log('presentation mode can be exited', !w.document.body.classList.contains('present'));
+
+    // ---- k-map in the expression dialog
+    ev('loadExample("Half adder (XOR + AND)")');
+    click('#btn-expr'); await sleep(50);
+    log('expression dialog shows Karnaugh maps', w.document.querySelectorAll('#expr-analysis table.kmap').length === 2, w.document.getElementById('expr-analysis').innerHTML.slice(0, 80));
+    ev('document.getElementById("dlg-expr").close()');
+
+    // ---- state machine designer
+    tool('fsm'); await sleep(50);
+    log('FSM designer previews a diagram and equations', !!w.document.querySelector('#fsm-out svg.fsm-diagram') && /D0 =/.test(w.document.getElementById('fsm-out').textContent));
+    w.document.getElementById('fsm-text').value = 'S0 0 ->'; click('#fsm-preview');
+    log('FSM designer reports table errors', /Line 1/.test(w.document.getElementById('fsm-err').textContent));
+    w.document.getElementById('fsm-text').value = ev('FSM_EXAMPLES["Detect two 1s in a row"]'); click('#fsm-build'); await sleep(50);
+    log('FSM designer builds a working circuit', ev('state.nodes.some(n => n.type === "DFF")') && ev('state.nodes.some(n => n.type === "CLOCK")') && !w.document.getElementById('dlg-fsm').open);
+
+    // ---- Verilog
+    ev('loadExample("Full adder")'); tool('verilog'); click('#verilog-export');
+    const vtext = w.document.getElementById('verilog-text').value;
+    log('Verilog export fills the editor', /^\/\/ Exported/.test(vtext) && /module /.test(vtext) && /endmodule/.test(vtext), vtext.slice(0, 60));
+    click('#verilog-import'); await sleep(50);
+    log('Verilog import rebuilds the circuit', ev('state.nodes.some(n => n.type === "INPUT")') && ev('state.nodes.length') > 0 && !w.document.getElementById('dlg-verilog').open);
+    tool('verilog'); w.document.getElementById('verilog-text').value = 'assign y = a ? b : c;'; click('#verilog-import');
+    log('Verilog import shows a readable error', w.document.getElementById('verilog-err').textContent.length > 5 && w.document.getElementById('dlg-verilog').open);
+    ev('document.getElementById("dlg-verilog").close()');
+
+    // ---- challenge authoring
+    ev('state = buildCircuit(parseProgram("Y = A XOR B")); sim = newSim(); changed();');
+    tool('author');
+    w.document.getElementById('author-title-in').value = 'Make XOR';
+    click('#author-try'); await sleep(50);
+    log('authored challenge can be tried immediately', ev('activeChallenge && activeChallenge.id') === 'custom' && ev('activeChallenge.title') === 'Make XOR' && !w.document.getElementById('dlg-author').open);
+    ev('state = buildCircuit(parseProgram("Y = A XOR B")); sim = newSim(); changed();');
+    const linkRaw = ev('captureChallenge({ title: "T", desc: "<b>x</b>", allowed: [] })');
+    const decoded = await w.decodeShare(await w.encodeShare(linkRaw));
+    log('challenge links round-trip through the share encoding', !!w.makeCustomChallenge(decoded) && decoded.ins.join() === 'A,B');
+
+    // ---- lessons
+    click('#btn-lessons'); await sleep(50);
+    log('lessons dialog lists every lesson (non-modal)', w.document.querySelectorAll('.lesson-item').length === ev('LESSONS.length') && w.document.getElementById('dlg-lessons').open);
+    w.document.querySelector('.lesson-item').click();
+    log('opening a lesson loads its circuit', ev('state.nodes.length') > 0 && !w.document.getElementById('lesson-body').hidden);
+    click('#lesson-next');
+    const ans = ev('lessonAnswer(lessonSpec(LESSONS[0], 1), LESSONS[0].steps[1].quiz.predict)');
+    w.document.querySelector('#lesson-quiz [data-a="' + (1 - ans) + '"]').click();
+    log('a wrong prediction is explained', /Not quite/.test(w.document.getElementById('quiz-res').textContent) && w.document.querySelectorAll('#lesson-quiz [data-a]:not([disabled])').length === 0);
+    ev('showLessonStep();');
+    log('answers are remembered when revisiting a step', /Not quite/.test(w.document.getElementById('quiz-res').textContent));
+    for (let k = 0; k < 4; k++) click('#lesson-next');
+    log('finishing a lesson records it', ev('lessonsDone().has("basics")'));
+    ev('document.getElementById("dlg-lessons").close()');
+
+    // ---- sequential challenge through the UI
+    ev('loadChallenge(CHALLENGES.find(c => c.id === "toggle"))');
+    log('sequential challenge card lists its steps', /Expect/.test(w.document.getElementById('challenge').textContent));
+    ev(`{ const c = state.nodes.find(n => n.label === "CLK"), q = state.nodes.find(n => n.label === "Q"); const f = addNode("DFF", 300, 100);
+      connect(c.id, 0, f.id, 1); connect(f.id, 1, f.id, 0); connect(f.id, 0, q.id, 0); changed(); }`);
+    click('#challenge [data-act=check]');
+    log('sequential challenge can be solved in the UI', /Passed all 4 steps/.test(w.document.getElementById('challenge').textContent), w.document.getElementById('challenge').textContent.slice(-90));
+
+    // ---- block viewer
+    ev('loadExample("Half adder (XOR + AND)")');
+    const origPrompt2 = w.prompt; w.prompt = () => 'HalfAdd';
+    ev('sel = new Set(state.nodes.map(n => n.id)); document.getElementById("save-block").click();');
+    w.prompt = origPrompt2;
+    ev('state = fresh(); sim = newSim(); changed(); addPart("BLOCK:HalfAdd", 250, 150);');
+    const blk = ev('state.nodes[0].id');
+    nodeEl(blk).dispatchEvent(new w.MouseEvent('dblclick', { bubbles: true }));
+    await sleep(50);
+    log('double-clicking a block opens a live view of its inside', w.document.getElementById('dlg-block').open && w.document.querySelectorAll('#block-svg .node').length >= 4, w.document.querySelectorAll('#block-svg .node').length);
+
+    // ---- progress file
+    log('progress file merges only known ids', ev('mergeProgress(progressPayload())') === 0);
+
+    // theme + flow toggles do not throw
+    ev('document.getElementById("theme").click(); document.getElementById("theme").click(); document.getElementById("flow").click();');
+    ev('document.getElementById("demo").click()');
+    await sleep(100);
+    log('demo on a custom circuit shows a caption', /Step 1 of/.test(ev('document.getElementById("caption").textContent')) || /Add at least one/.test(ev('document.getElementById("caption").textContent')));
+    ev('stopDemo()');
+  } catch (e) { out.push('DRIVER EXCEPTION ' + e.message + '\n' + e.stack); }
+  if (errors.length) out.push('IFRAME ERRORS: ' + errors.join(' | '));
+  out.push(errors.length ? 'RESULT: ERRORS' : 'RESULT: no runtime errors');
+  document.getElementById('out').textContent = out.join('\n');
+  document.title = 'done';
+});
+</script></body></html>

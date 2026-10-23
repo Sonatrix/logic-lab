@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Logic Lab – learn digital circuits interactively</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Learn digital circuits interactively: drag, wire and simulate logic gates, flip-flops and more.">
+  <meta name="theme-color" content="#1a1f2b">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip-link" href="#canvas">Skip to the circuit canvas</a>
+  <header>
+    <button id="toggle-palette" class="narrow-only" aria-label="Show or hide the parts palette">☰ Parts</button>
+    <h1>⚡ Logic Lab</h1>
+    <label>Examples
+      <select id="examples"><option value="">— load an example —</option></select>
+    </label>
+    <button id="btn-lessons" title="Short guided lessons with prediction questions">📘 Lessons</button>
+    <button id="btn-challenges" title="Build circuits to match a target truth table">🎯 Challenges</button>
+    <button id="btn-expr" title="Boolean expression ↔ circuit, K-maps">ƒ Expressions</button>
+    <select id="tools" aria-label="More tools" title="More tools">
+      <option value="">🛠 Tools…</option>
+      <option value="tidy">Tidy layout (auto-arrange)</option>
+      <option value="fsm">State machine designer…</option>
+      <option value="verilog">Verilog export / import…</option>
+      <option value="author">Create a challenge from this circuit…</option>
+      <option value="present">Presentation mode</option>
+      <option value="progress-export">Export my progress</option>
+      <option value="progress-import">Import progress…</option>
+    </select>
+    <input id="progress-file" type="file" accept=".json,application/json" hidden>
+    <span class="sep"></span>
+    <label title="How signals propagate after a switch changes">Speed
+      <select id="speed">
+        <option value="off">Instant</option>
+        <option value="slow">Slow-mo</option>
+        <option value="manual">Step by step</option>
+      </select>
+    </label>
+    <button id="step" title="Advance the signals by one gate delay" hidden>⏭ Step</button>
+    <button id="demo" title="Step through every switch combination of the current circuit">▶ Demo</button>
+    <button id="pause" title="Freeze the clocks and the demo (Space bar when nothing is selected)" aria-pressed="false">⏸ Pause</button>
+    <label class="chk" title="Animate signals travelling along wires"><input id="flow" type="checkbox" checked> Flow</label>
+    <button id="btn-timing" title="Show a timing diagram of switches, clock and LEDs">〰 Timing</button>
+    <div class="spacer"></div>
+    <button id="undo" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+    <button id="redo" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
+    <button id="zout" title="Zoom out" aria-label="Zoom out">−</button>
+    <button id="zoom-label" title="Reset view" aria-label="Reset zoom">100%</button>
+    <button id="zin" title="Zoom in" aria-label="Zoom in">+</button>
+    <div class="more">
+    <button id="select-mode" title="Drag on the canvas to box-select (or hold Shift)">⬚ Select</button>
+    <button id="save-block" title="Save the selected parts as a reusable block">📦 Save block</button>
+    <span class="sep"></span>
+    <button id="share" title="Copy a link to this circuit">🔗 Share</button>
+    <button id="export" title="Download circuit as JSON">Export</button>
+    <button id="import" title="Load a circuit JSON file">Import</button>
+    <input id="file" type="file" accept=".json,application/json" hidden>
+    <button id="btn-image" title="Export the circuit or timing diagram as an image">🖼 Image</button>
+    <button id="btn-tour" title="Take the guided tour">? Tour</button>
+    <button id="theme" title="Light / dark theme" aria-label="Toggle light and dark theme">🌓</button>
+    <button id="clear">Clear</button>
+    </div>
+    <button id="toggle-more" class="narrow-only" aria-label="More actions" aria-expanded="false">⋯</button>
+    <button id="toggle-info" class="narrow-only" aria-label="Show or hide the info panel">ℹ Info</button>
+  </header>
+  <div id="sr" class="sr-only" role="status" aria-live="polite"></div>
+
+  <main>
+    <aside id="palette" aria-label="Parts palette">
+      <input id="palette-search" type="search" placeholder="Search parts…  ( / )" aria-label="Search parts" autocomplete="off">
+      <p id="palette-none" class="hint" hidden>No parts match.</p>
+      <h2>Sources &amp; sinks</h2>
+      <div class="group" id="io-items"></div>
+      <h2>Logic gates</h2>
+      <div class="group" id="gate-items"></div>
+      <h2>Memory &amp; chips</h2>
+      <div class="group" id="chip-items"></div>
+      <h2>My blocks</h2>
+      <div class="group" id="block-items"></div>
+      <p class="hint">Drag a part onto the canvas (or double-click it).<br>Click one to read about it.</p>
+    </aside>
+
+    <div id="center">
+      <section id="stage">
+        <svg id="canvas" xmlns="http://www.w3.org/2000/svg" tabindex="0" role="application"
+             aria-label="Circuit canvas. Press ] or [ to select the next or previous part, arrow keys to move it, Enter to flip a switch. Wire parts using the Wiring section of the info panel."></svg>
+        <div id="caption"></div>
+        <div id="empty">Drag parts here, then drag from an <b>output dot</b> (right side) to an <b>input dot</b> (left side).<br>Or try <b>🎯 Challenges</b>, <b>ƒ Expressions</b>, or load an example.</div>
+        <div id="toast"></div>
+      </section>
+      <section id="timing" hidden>
+        <div class="timing-h"><b>Timing diagram</b> <span class="hint">last 10 s</span>
+          <span class="spacer"></span><button id="timing-clear">Clear</button><button id="timing-close">✕</button></div>
+        <canvas id="timing-canvas"></canvas>
+      </section>
+    </div>
+
+    <aside id="info" aria-label="Part information and circuit truth table">
+      <div id="challenge"></div>
+      <div id="gate-info"></div>
+      <h2>Circuit truth table</h2>
+      <div id="truth"></div>
+      <div class="hint">
+        <b>Controls</b><br>
+        • Click a <b>switch</b> to toggle 0/1; hold a <b>button</b><br>
+        • Double-click a switch, LED or wire to name it<br>
+        • Click a wire to select it (✕ or <kbd>Del</kbd> removes it)<br>
+        • Drag from an input dot to re-wire<br>
+        • Drag the background to pan, wheel / pinch to zoom<br>
+        • <b>Shift</b>-drag or ⬚ Select to box-select; <kbd>Ctrl+C</kbd>/<kbd>V</kbd> copy, paste<br>
+        • <kbd>Del</kbd> removes, <kbd>Ctrl+Z</kbd>/<kbd>Y</kbd> undo/redo<br>
+        • Orange dashed dots are unconnected inputs (they read 0)<br>
+        <b>Keyboard</b>: focus the canvas, then <kbd>]</kbd>/<kbd>[</kbd> pick a part, arrows move it, <kbd>Enter</kbd> flips a switch; wire with the <i>Wiring</i> menus below the part info
+      </div>
+    </aside>
+  </main>
+
+  <footer><span id="status"></span></footer>
+
+  <dialog id="dlg-challenges">
+    <h2>🎯 Challenges</h2>
+    <p class="hint">Each challenge sets up the switches and LEDs. Wire up gates until the LEDs match the target truth table, then press <b>Check</b>.</p>
+    <div id="chal-list"></div>
+    <div class="row"><button class="close">Close</button></div>
+  </dialog>
+
+  <dialog id="dlg-expr">
+    <h2>ƒ Expressions ↔ circuit</h2>
+    <p class="hint">One <code>NAME = expression</code> per line. Operators: <code>AND</code> <code>OR</code> <code>NOT</code> <code>XOR</code> <code>NAND</code> <code>NOR</code> <code>XNOR</code>
+      or symbols <code>*</code> <code>+</code> <code>!</code> <code>^</code> and a trailing <code>'</code> (A' = NOT A). Constants <code>0</code>/<code>1</code>. Later lines can use earlier names.</p>
+    <textarea id="expr-text" rows="6" spellcheck="false" placeholder="SUM = A XOR B XOR CIN&#10;COUT = (A AND B) OR (CIN AND (A XOR B))"></textarea>
+    <div id="expr-err" class="bad"></div>
+    <div class="row"><button id="expr-build">Build circuit from text</button><button id="expr-load">Read expressions from my circuit</button><button class="close">Close</button></div>
+    <h3>Your circuit as expressions</h3>
+    <div id="expr-analysis"></div>
+  </dialog>
+
+  <button id="present-exit" hidden>✕ Exit presentation</button>
+
+  <dialog id="dlg-lessons" aria-labelledby="lessons-title">
+    <h2 id="lessons-title">📘 Lessons</h2>
+    <div id="lesson-list"></div>
+    <div id="lesson-body" hidden>
+      <div class="lesson-head"><button id="lesson-back">← All lessons</button><b id="lesson-name"></b><span class="spacer"></span><span class="hint" id="lesson-count"></span></div>
+      <div id="lesson-text"></div>
+      <div id="lesson-quiz"></div>
+      <div class="row"><button id="lesson-prev">Back</button><button id="lesson-next" class="primary">Next</button></div>
+    </div>
+    <div class="row"><button class="close">Close</button></div>
+  </dialog>
+
+  <dialog id="dlg-fsm" aria-labelledby="fsm-title">
+    <h2 id="fsm-title">State machine designer</h2>
+    <p class="hint">Describe a machine as a table. It becomes D flip-flops and minimized logic, wired up with a clock. First state listed = reset state. Format: <code>STATE inputs -&gt; NEXT / outputs</code> (use <code>x</code> for don't-care).</p>
+    <label class="hint">Example <select id="fsm-example"></select></label>
+    <textarea id="fsm-text" rows="9" spellcheck="false"></textarea>
+    <div id="fsm-err" class="bad"></div>
+    <div class="row"><button id="fsm-preview">Preview</button><button id="fsm-build" class="primary">Build circuit</button><button class="close">Close</button></div>
+    <div id="fsm-out"></div>
+  </dialog>
+
+  <dialog id="dlg-verilog" aria-labelledby="verilog-title">
+    <h2 id="verilog-title">Verilog export / import</h2>
+    <p class="hint">Export writes the current circuit as a Verilog module (gates, constants, flip-flops, latches, mux, decoder). Import reads gate primitives (<code>and</code>, <code>or</code>, <code>not</code>…) and <code>assign</code> with <code>&amp; | ^ ~</code>; buses, feedback and procedural code are not supported.</p>
+    <textarea id="verilog-text" rows="12" spellcheck="false"></textarea>
+    <div id="verilog-err" class="bad"></div>
+    <div class="row"><button id="verilog-export">Export current circuit</button><button id="verilog-copy">Copy</button><button id="verilog-download">Download .v</button><button id="verilog-import" class="primary">Build circuit from this text</button><button class="close">Close</button></div>
+  </dialog>
+
+  <dialog id="dlg-author" aria-labelledby="author-title">
+    <h2 id="author-title">Create a challenge</h2>
+    <p class="hint">Your current circuit defines the target: its switches become the challenge inputs and its LEDs the outputs (combinational circuits only). Learners get a blank scaffold and must match the behaviour.</p>
+    <label>Title <input id="author-title-in" type="text" maxlength="60" value="My challenge"></label>
+    <label>Description <textarea id="author-desc" rows="3" maxlength="400" placeholder="What should the circuit do?"></textarea></label>
+    <label>Hint <input id="author-hint" type="text" maxlength="200"></label>
+    <fieldset><legend>Allowed gates (none ticked = any part)</legend><div id="author-gates"></div></fieldset>
+    <div id="author-err" class="bad"></div>
+    <div class="row"><button id="author-copy" class="primary">Copy challenge link</button><button id="author-try">Try it myself</button><button class="close">Close</button></div>
+    <input id="author-link" type="text" readonly aria-label="Challenge link" hidden>
+  </dialog>
+
+  <dialog id="dlg-block" class="floating" aria-labelledby="block-title">
+    <div class="lesson-head"><b id="block-title">Inside block</b><span class="spacer"></span><button class="close" aria-label="Close block view">✕</button></div>
+    <p class="hint">Live, read-only view of the circuit inside this block. Toggle switches on the main canvas to watch it work.</p>
+    <svg id="block-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Inside of the block"></svg>
+  </dialog>
+
+  <dialog id="dlg-image" aria-labelledby="dlg-image-title">
+    <h2 id="dlg-image-title">🖼 Export as image</h2>
+    <p class="hint">Exports exactly what you see, in the current theme. Use the light theme for printing.</p>
+    <div class="row">
+      <button id="img-png">Circuit as PNG</button>
+      <button id="img-svg">Circuit as SVG</button>
+      <button id="img-timing">Timing diagram as PNG</button>
+    </div>
+    <div class="row"><button class="close">Close</button></div>
+  </dialog>
+
+  <script src="parts.js"></script>
+  <script src="model.js"></script>
+  <script src="expr.js"></script>
+  <script src="layout.js"></script>
+  <script src="netlist.js"></script>
+  <script src="fsm.js"></script>
+  <script src="challenges.js"></script>
+  <script src="lessons.js"></script>
+  <script src="timing.js"></script>
+  <script src="imageexport.js"></script>
+  <script src="tour.js"></script>
+  <script src="app.js"></script>
+  <script src="tools.js"></script>
+</body>
+</html>

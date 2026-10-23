@@ -1,0 +1,11 @@
+{
+  "name": "Logic Lab",
+  "short_name": "Logic Lab",
+  "description": "Learn digital circuits interactively: drag, wire and simulate logic gates.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#12151c",
+  "theme_color": "#1a1f2b",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
